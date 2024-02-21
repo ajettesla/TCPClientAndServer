@@ -12,26 +12,27 @@
 #include <cstdio>
 #include <calcLib.h>
 #include <stdlib.h>
-
-
-// Enable if you want debugging to be printed, see examble below.
-// Alternative, pass CFLAGS=-DDEBUG to make, make CFLAGS=-DDEBUG
-#define DEBUG
+#include <pthread.h>
+#include <unistd.h>
+#include <chrono>
 
 std::vector<std::string> split(std::string sString,std::string delimiter);
 
-void gsready(std::string &ip, int port, struct sockaddr_in *ipv4,struct sockaddr_in6 *ipv6, int* ipstatus);
-
+int gsready(std::string &ip, int port,int* ipstatus);
 
 char* math(std::string string, double a, double b);
 
 std::string getCalString();
 
-char buffer[1000];
+void printtime();
+
+char buffer[1024];
 int master_socketfd = 0;
 int comm_socketfd = 0;
 int sent_recv_bytes;
 fd_set readfds;
+
+char errorchar[] = "ERROR\n";
 
 int main(int argc, char *argv[]){
   initCalcLib();
@@ -42,8 +43,10 @@ int main(int argc, char *argv[]){
  
   std::string ipString = "";
   
-  int port;
+   int port;
   
+   char timeo[] = "ERROR TO\n";
+   
   if(outputString.size() > 2){
   port = atoi(outputString[outputString.size()-1].c_str());
   for(int i=0; i < 8 ; i++){
@@ -55,84 +58,61 @@ int main(int argc, char *argv[]){
    ipString = outputString[0];
       }
 
-   struct sockaddr_in6 *ipv6 = new struct sockaddr_in6;
-
-   struct sockaddr_in *ipv4 = new struct sockaddr_in;
-
    int *ipstatus = new int;
 
-   gsready(ipString ,port, ipv4, ipv6, ipstatus);
-   
-   if(*ipstatus == 1){
-      master_socketfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-      
-      if(master_socketfd < 0){
-      std::cout << "Error while creating master socket file descriptor" << std::endl;
-      exit(1);
-      }
-      
-      if(bind(master_socketfd, (struct sockaddr*)ipv4, sizeof(struct sockaddr)) < 0){
-      std::cout << "Error while bind with ip and port " << std::endl;
-      exit(1);
-      }
-      
-      socklen_t addrlen = sizeof(struct sockaddr);
-      
-      if(listen(master_socketfd, 5) < 0){
-      std::cout <<" listen failed " << std::endl;      
-      exit(1);}
-
-      while(1){
+   int master_socketfd = gsready(ipString ,port, ipstatus);   
       FD_ZERO(&readfds);
       FD_SET(master_socketfd, &readfds);
+
+      while(1){
+      int rc = select(master_socketfd + 1, &readfds, NULL, NULL, NULL);
+      if(rc < 0){perror("error with select system call"); exit(1);}
       
-      select(master_socketfd + 1, &readfds, NULL, NULL, NULL);
-      
-      if(FD_ISSET(master_socketfd, &readfds)){
-      std::cout << "New connection is arrived " << std::endl;
-      }
+      if(FD_ISSET(master_socketfd, &readfds)){     
       
       struct sockaddr_in client_addr;
+      struct sockaddr_in6 client_addr6;
       
-      comm_socketfd = accept(master_socketfd, (struct sockaddr*)&client_addr, &addrlen);
+      if(*ipstatus == 1){
+      socklen_t addrlen = sizeof(client_addr);
+      comm_socketfd = accept(master_socketfd, (struct sockaddr*)&client_addr, &addrlen);}
+      else if(*ipstatus == 2){
+      socklen_t addrlen = sizeof(client_addr6);
+      comm_socketfd = accept(master_socketfd, (struct sockaddr*)&client_addr, &addrlen);}
       
       if(comm_socketfd < 0){
-      std::cout << "Accept ERROR" << std::endl;
-      
-      }
-      
+      perror("error with accept");exit(1);}
       
       struct timeval timeout;
       timeout.tv_sec = 5;
       timeout.tv_usec = 0;
-      
           
-      setsockopt(comm_socketfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+      if(setsockopt(comm_socketfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1){{perror("setsockopt");exit(1);}}
+      std::cout << std::endl;
+      while(1){            
       
-      memset(buffer, 0, sizeof(buffer));
-      
-      char intialMessage[] = "TEXT TCP 1.0\n";
-      
+      char intialMessage[] = "TEXT TCP 1.0\n";      
+    
       sent_recv_bytes = send(comm_socketfd, intialMessage, sizeof(intialMessage),0);
       
+      if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
+ 
+      char newline[] = "\n";
+
+      sent_recv_bytes = send(comm_socketfd, newline, sizeof(newline),0);
       
-      if(sent_recv_bytes < 0){
-      std::cout << "error while sending data to client" << std::endl;
-      close(comm_socketfd);
-      break;
-      }
+      if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
      
       memset(buffer, 0, sizeof(buffer));
-      recvAgain:
-      
+     
       sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
+    
       if(sent_recv_bytes < 0){
-      
-      std::cout << "timeout is occured" << std::endl;
-      close(comm_socketfd);
-      break;
-      }
-      
+       if(errno == EAGAIN){
+       sent_recv_bytes = send(comm_socketfd, timeo, sizeof(timeo),0);
+       if(sent_recv_bytes < 0){perror("fail to send data");exit(1);}}
+       else{perror("error while receving datat");close(comm_socketfd);exit(1);} }
+     
       std::string receivedData(buffer);
       
          
@@ -142,31 +122,25 @@ int main(int argc, char *argv[]){
        std::string calString = getCalString();
        std::vector<std::string> inputVector = split(calString," ");
         calString = calString + "\n";
-        std::cout << calString << std::endl;
+        std::cout << calString;
         double a = std::stod(inputVector[1]);
         double b = std::stod(inputVector[2]);
         char *result = math(inputVector[0], a, b);
-        std::string calServerResult(result);        
-        std::cout << "server result is " << calServerResult << std::endl;
+        std::string calServerResult(result); 
+        std::cout << result;
         sent_recv_bytes = send(comm_socketfd, calString.c_str(), strlen(calString.c_str()),0);
-        if(sent_recv_bytes < 0){
-          std::cout << "error while sending data " << std::endl;
-          close(comm_socketfd);
-          break;
-        }
-        
-        Again:
+        if(sent_recv_bytes < 0){perror("error while sending data ");close(comm_socketfd);exit(1);}         
         
         memset(buffer, 0, sizeof(buffer));
         sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
         
-        if(sent_recv_bytes < 0){
-                std::cout << "timeout is occured" << std::endl;
-                goto Again;
-                     }
-                                
-          std::cout << sent_recv_bytes << std::endl;
-            
+      if(sent_recv_bytes < 0){
+       if(errno == EAGAIN){
+       sent_recv_bytes = send(comm_socketfd, timeo, sizeof(timeo),0);
+       if(sent_recv_bytes < 0){perror("fail to send data");exit(1);}}
+       else{perror("error while receving data"); close(comm_socketfd);exit(1);}
+      }
+                  
           std::string receivedData(buffer);
       
           receivedData = receivedData.substr(0,sent_recv_bytes-1);
@@ -175,224 +149,49 @@ int main(int argc, char *argv[]){
           
           
           if(receivedData == calServerResult){
-           std::cout << "OK" << std::endl;
+            std::cout << "OK" << std::endl;
             char okchar[] = "OK\n";
             sent_recv_bytes = send(comm_socketfd, okchar, sizeof(okchar),0);
       
       
            if(sent_recv_bytes < 0){
-                 std::cout << "error while sending data to client" << std::endl;
+                 perror("error while sending data to client");
                  close(comm_socketfd);
-                 break;
+                 exit(1);
                                 }
-            close(comm_socketfd);
-            break;}
+            // close(comm_socketfd);
+            // break;
+          
+            }
               
              else {
-             std::cout << "ERROR" << std::endl;
-             std::cout << calServerResult.length() << std::endl;
-             std::cout << receivedData.length() << std::endl;
-             std::cout << calServerResult << std::endl;
-             std::cout << "client result is " << receivedData << std::endl;
-            char errorchar[] = "ERROR\n";
-            sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
+             std::cout << errorchar;
+             sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
            
-           if(sent_recv_bytes < 0){
-                 std::cout << "error while sending data to client" << std::endl;
-                 close(comm_socketfd);
-                 break;
-                                }
-              goto Again;             
-             
-             }
-                                      
-      
-      }
+           if(sent_recv_bytes < 0){perror("error while sending data to client"); close(comm_socketfd);exit(1);}}}
       else{
-        char wrongChar[] = "ERROR\n";
-        sent_recv_bytes = send(comm_socketfd, wrongChar, sizeof(intialMessage),0);
-         goto recvAgain;  
-      }   
-
-     
-      }//while loop end;      
-      
-     
-     
-     } //if statement end;
+        std::cout << errorchar;
+        sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
+        // close(comm_socketfd);
+        // break;
   
-   else if(*ipstatus == 2){
-   
-   master_socketfd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+      }   
       
-      if(master_socketfd < 0){
-      std::cout << "Error while creating master socket file descriptor" << std::endl;
-      exit(1);
-      }
-      
-      if(bind(master_socketfd, (struct sockaddr*)ipv6, sizeof(struct sockaddr)) < 0){
-      std::cout << "Error while bind with ip and port " << std::endl;
-      exit(1);
-      }
-      
-      socklen_t addrlen = sizeof(struct sockaddr);
-      
-      if(listen(master_socketfd, 5) < 0){
-      std::cout <<" listen failed " << std::endl;      
-      exit(1);}
-      
-      
-      while(1){
-      FD_ZERO(&readfds);
-      FD_SET(master_socketfd, &readfds);
-      
-      select(master_socketfd + 1, &readfds, NULL, NULL, NULL);
-      
-      if(FD_ISSET(master_socketfd, &readfds)){
-      std::cout << "New connection is arrived " << std::endl;
-      }
-      
-      struct sockaddr_in client_addr;
-      
-      comm_socketfd = accept(master_socketfd, (struct sockaddr*)&client_addr, &addrlen);
-      
-      if(comm_socketfd < 0){
-      std::cout << "Accept ERROR" << std::endl;
+     }
+      }   
       
       }
-      
-      struct timeval timeout;
-      timeout.tv_sec = 5;
-      timeout.tv_usec = 0;
-      
-          
-      setsockopt(comm_socketfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-      
-      memset(buffer, 0, sizeof(buffer));
-      
-      char intialMessage[] = "TEXT TCP 1.0\n";
-      
-      sent_recv_bytes = send(comm_socketfd, intialMessage, sizeof(intialMessage),0);
-      
-       
-      if(sent_recv_bytes < 0){
-      std::cout << "error while sending data to client" << std::endl;
-      close(comm_socketfd);
-      break;
-      }
-     
-      memset(buffer, 0, sizeof(buffer));
-      
-      recvAg:
-      
-      sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
-      if(sent_recv_bytes < 0){
-      
-      std::cout << "timeout is occured" << std::endl;
-      close(comm_socketfd);
-      break;
-      }
-      
-      std::string receivedData(buffer);
-      
-         
-      receivedData = receivedData.substr(0,sent_recv_bytes-1);
-      
-      if(receivedData == "OK"){
-       std::string calString = getCalString();
-       std::vector<std::string> inputVector = split(calString," ");
-        calString = calString + "\n";
-        std::cout << calString << std::endl;
-        double a = std::stod(inputVector[1]);
-        double b = std::stod(inputVector[2]);
-        char *result = math(inputVector[0], a, b);
-        std::string calServerResult(result);        
-        std::cout << "server result is " << calServerResult << std::endl;
-        sent_recv_bytes = send(comm_socketfd, calString.c_str(), strlen(calString.c_str()),0);
-        if(sent_recv_bytes < 0){
-          std::cout << "error while sending data " << std::endl;
-          close(comm_socketfd);
-          break;
-        }
-        
-        Ag:
-        
-        memset(buffer, 0, sizeof(buffer));
-        sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
-        
-        if(sent_recv_bytes < 0){
-                std::cout << "timeout is occured" << std::endl;
-                goto Ag;
-                     }
-        std::cout << sent_recv_bytes << std::endl;
-            
-        std::string receivedData(buffer);
-      
-        receivedData = receivedData.substr(0,sent_recv_bytes-1);
-          
-        receivedData = receivedData + "\n"; 
-        
-        if(receivedData == calServerResult){
-           std::cout << "OK" << std::endl;
-            char okchar[] = "OK\n";
-            sent_recv_bytes = send(comm_socketfd, okchar, sizeof(okchar),0);
-      
-      
-        if(sent_recv_bytes < 0){
-                 std::cout << "error while sending data to client" << std::endl;
-                 close(comm_socketfd);
-                 break;
-                                }
-            close(comm_socketfd);
-            break;
-            }
-      
-        else {
-             std::cout << "ERROR" << std::endl;
-             std::cout << calServerResult.length() << std::endl;
-             std::cout << receivedData.length() << std::endl;
-             std::cout << calServerResult << std::endl;
-             std::cout << "client result is " << receivedData << std::endl;
-            char errorchar[] = "ERROR\n";
-            sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
-           
-           if(sent_recv_bytes < 0){
-                 std::cout << "error while sending data to client" << std::endl;
-                 close(comm_socketfd);
-                 break;
-                                }
-              goto Ag;             
-             
-             }}
-             
-             else{
-        char wrongChar[] = "ERROR\n";
-        sent_recv_bytes = send(comm_socketfd, wrongChar, sizeof(intialMessage),0);
-         goto recvAg;  
-      }
-             
-            
-             
-            
-            
-      
-      
-      
-      
-      
-      
-      }
-      
-   
-   
-   
-   }   
+     close(master_socketfd);
+     std::exit(1);
 
 return 0;
 }
 
-void gsready(std::string &ip, int port, sockaddr_in *ipv4, sockaddr_in6 *ipv6,int* ipstatus){
+int gsready(std::string &ip, int port,int* ipstatus){
 
+int socketfd; 
+struct sockaddr_in ipv4;
+struct sockaddr_in6 ipv6;
 struct addrinfo hint, *output, *temp;
 memset(&hint, 0, sizeof(hint));
 hint.ai_family = AF_UNSPEC;
@@ -406,31 +205,44 @@ std::cout << "There is problem in getting getaddrinfo" << std::endl;
 for(temp=output; temp != NULL;temp->ai_addr){
 
 if(temp->ai_family == AF_INET){
-ipv4->sin_family = AF_INET;
-ipv4->sin_port = htons(port);
-ipv4->sin_addr.s_addr = ((struct sockaddr_in*)temp->ai_addr)->sin_addr.s_addr;
-*ipstatus = 1;
-break;
-                            }
+ipv4.sin_family = AF_INET;
+ipv4.sin_port = htons(port);
+ipv4.sin_addr.s_addr = ((struct sockaddr_in*)temp->ai_addr)->sin_addr.s_addr;
+socketfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+if(socketfd > 0){
+  if(bind(socketfd,(struct sockaddr*)&ipv4,sizeof(struct sockaddr)) < 0){perror("error with binding the ip address");exit(1);}
+  std::cout << "Listening on " << ip << " port " << port << std::endl;
+  *ipstatus = 1;
+   break;
+}}
                                               
 else if(temp->ai_family == AF_INET6){
-ipv6->sin6_family = AF_INET6;
-ipv6->sin6_port = htons(port);
-ipv6->sin6_addr = ((struct sockaddr_in6*)temp->ai_addr)->sin6_addr;
-*ipstatus = 2;
-break;
+ipv6.sin6_family = AF_INET6;
+ipv6.sin6_port = htons(port);
+ipv6.sin6_addr = ((struct sockaddr_in6*)temp->ai_addr)->sin6_addr;
+socketfd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+if(socketfd > 0){
+  if(bind(socketfd,(struct sockaddr*)&ipv6,sizeof(struct sockaddr_in6)) < 0){perror("error with binding the ip address");exit(1);}
+   std::cout << "Listening on " << ip << " port " << port << std::endl;
+  *ipstatus = 2;
+   break;
+}}}
 
-}
-temp = temp->ai_next;
-}
+if(*ipstatus != 1 && *ipstatus != 2){
+  perror("error with socket");
+  exit(1);}
+
+if(listen(socketfd, 5) < 0){perror("error with listen function");exit(1);}
+  
 freeaddrinfo(output);
+return socketfd;
 }
 
 
 char* math(std::string string, double a, double b) {
-    char* str = new char[30]; // Allocate memory for the result string
+    char* str = new char[30]; 
     if (str == NULL) {
-        return NULL; // Memory allocation failed
+        return NULL; 
     }
 
     if (string == "fsub") {
@@ -491,11 +303,15 @@ for(int i=0; i < static_cast<int>(sString.length());i++){
   if(count==0 && (i == static_cast<int>(sString.length()-1))){
          nString.push_back(temp);}               }
 
+  if(nString.size() < 2){
+    std::cout << "ERROR" << std::endl;
+    exit(1);
+  }
+
 
 
 return nString;
 }
-
 
 
 std::string getCalString(){
@@ -536,3 +352,17 @@ float2 = randomFloat();
 
 return calString;
 }
+
+void printtime(){
+  // Get the current time point
+    auto currentTime = std::chrono::system_clock::now();
+
+    // Extract seconds and milliseconds
+    auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(currentTime);
+    auto milliseconds = currentTime - seconds;
+
+    // Convert seconds to a time_t value
+    std::time_t time = std::chrono::system_clock::to_time_t(currentTime);
+
+    // Print the time with seconds and milliseconds
+    std::cout << "Time: " << std::ctime(&time) << "Milliseconds: " << milliseconds.count() << "ms" << std::endl;}

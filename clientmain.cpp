@@ -13,6 +13,8 @@
 #include <calcLib.h>
 #include <stdlib.h>
 
+//github  https://github.com/ajettesla/Assignment1a.git
+
 std::vector<std::string> split(std::string sString,std::string delimiter);
 void gsready(std::string &ip, int port, struct sockaddr_in *ipv4,struct sockaddr_in6 *ipv6, int* ipstatus);
 
@@ -47,9 +49,13 @@ int port;
 if(outputString.size() > 2){
   port = atoi(outputString[outputString.size()-1].c_str());
   for(int i=0; i < 8 ; i++){
-   ipString = ipString + outputString[i];
+  if(i > 0){
+   ipString = ipString + ":" + outputString[i];}
+   else{
+   ipString = ipString + outputString[i];}
+   }
   }
-}
+
 else{
 port = atoi(outputString[1].c_str());
 ipString = outputString[0];
@@ -71,7 +77,7 @@ gsready(ipString ,port, ipv4, ipv6, ipstatus);
   if(*ipstatus == 1){
   std::cout << "IP type IPV4" << std::endl;}
   else if(*ipstatus == 2){
-  std::cout << "IP type is IPV6 << std::endl;
+  std::cout << "IP type is IPV6" << std::endl;
   }
 #endif
 
@@ -84,7 +90,7 @@ if(*ipstatus == 1){
         return 1;
     }
 
-   if(connect(socketfd, (struct sockaddr*)ipv4,sizeof(struct sockaddr)) == -1){
+   if(connect(socketfd, (struct sockaddr*)ipv4,sizeof(struct sockaddr_in)) == -1){
     std::cout << "Error in connect" << std::endl;
     close(socketfd);}
 
@@ -103,7 +109,9 @@ if(*ipstatus == 1){
  
              }
 else if(*ipstatus == 2){
+
      int socketfd;
+     
      socketfd = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
      
      if(socketfd == -1) {
@@ -111,9 +119,10 @@ else if(*ipstatus == 2){
         return 1;
     }
     
-    if(connect(socketfd, (struct sockaddr*)ipv6,sizeof(struct sockaddr)) == -1){
-    std::cout << "Error in connect" << std::endl;
+    if(connect(socketfd, (struct sockaddr*)ipv6,sizeof(struct sockaddr_in6)) == -1){
+    perror("connect error is " );
     close(socketfd);
+    return 1;
     }
     
     std::string okChar = "OK\n";
@@ -127,10 +136,7 @@ else if(*ipstatus == 2){
     sendBuffer(socketfd, result);
     recvBuffer(socketfd);
     close(socketfd);
-
-
-
-            }
+                }
 
 
 }
