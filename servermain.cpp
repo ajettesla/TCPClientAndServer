@@ -16,6 +16,8 @@
 #include <unistd.h>
 #include <chrono>
 
+
+
 std::vector<std::string> split(std::string sString,std::string delimiter);
 
 int gsready(std::string &ip, int port,int* ipstatus);
@@ -34,161 +36,137 @@ fd_set readfds;
 
 char errorchar[] = "ERROR\n";
 
+
+
 int main(int argc, char *argv[]){
+
   initCalcLib();
-  
   std::string delimiter = ":";
-  
   std::vector<std::string> outputString = split(argv[1],":"); 
- 
   std::string ipString = "";
-  
-   int port;
-  
-   char timeo[] = "ERROR TO\n";
-   
+  int port;
+  char timeo[] = "ERROR TO\n";
+
   if(outputString.size() > 2){
   port = atoi(outputString[outputString.size()-1].c_str());
   for(int i=0; i < 8 ; i++){
-   ipString = ipString + outputString[i];
-           }
-         }
-     else{
+   ipString = ipString + outputString[i];}}
+  else{
    port = atoi(outputString[1].c_str());
-   ipString = outputString[0];
-      }
+   ipString = outputString[0];}
 
-   int *ipstatus = new int;
+  int *ipstatus = new int;
 
-   int master_socketfd = gsready(ipString ,port, ipstatus);   
-      FD_ZERO(&readfds);
-      FD_SET(master_socketfd, &readfds);
+  int master_socketfd = gsready(ipString ,port, ipstatus);   
+  FD_ZERO(&readfds);
+  FD_SET(master_socketfd, &readfds);
 
-      while(1){
-      int rc = select(master_socketfd + 1, &readfds, NULL, NULL, NULL);
-      if(rc < 0){perror("error with select system call"); exit(1);}
-      
-      if(FD_ISSET(master_socketfd, &readfds)){     
-      
+  while(1){
+    int rc = select(master_socketfd + 1, &readfds, NULL, NULL, NULL);
+    if(rc < 0){perror("error with select system call"); exit(1);}
+
+    if(FD_ISSET(master_socketfd, &readfds)){
       struct sockaddr_in client_addr;
       struct sockaddr_in6 client_addr6;
-      
       if(*ipstatus == 1){
       socklen_t addrlen = sizeof(client_addr);
       comm_socketfd = accept(master_socketfd, (struct sockaddr*)&client_addr, &addrlen);}
       else if(*ipstatus == 2){
       socklen_t addrlen = sizeof(client_addr6);
       comm_socketfd = accept(master_socketfd, (struct sockaddr*)&client_addr, &addrlen);}
-      
+
       if(comm_socketfd < 0){
       perror("error with accept");exit(1);}
-      
+
       struct timeval timeout;
       timeout.tv_sec = 5;
       timeout.tv_usec = 0;
-          
+
       if(setsockopt(comm_socketfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1){{perror("setsockopt");exit(1);}}
       std::cout << std::endl;
-      while(1){            
       
-      char intialMessage[] = "TEXT TCP 1.0\n";      
-    
-      sent_recv_bytes = send(comm_socketfd, intialMessage, sizeof(intialMessage),0);
-      
-      if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
- 
-      char newline[] = "\n";
+      while(1){
+        char intialMessage[] = "TEXT TCP 1.0\n";
+        sent_recv_bytes = send(comm_socketfd, intialMessage, sizeof(intialMessage),0);
+        if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
+        char newline[] = "\n";
+        sent_recv_bytes = send(comm_socketfd, newline, sizeof(newline),0);
+        if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
+         memset(buffer, 0, sizeof(buffer));
+         sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
+         if(sent_recv_bytes < 0){
+             if(errno == EAGAIN){
+             sent_recv_bytes = send(comm_socketfd, timeo, sizeof(timeo),0);
+                if(sent_recv_bytes < 0){perror("fail to send data");exit(1);}
+                close(comm_socketfd);break;}
+                else{perror("error while receving datat");close(comm_socketfd);exit(1);} }
 
-      sent_recv_bytes = send(comm_socketfd, newline, sizeof(newline),0);
-      
-      if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
-     
-      memset(buffer, 0, sizeof(buffer));
-     
-      sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
-    
-      if(sent_recv_bytes < 0){
-       if(errno == EAGAIN){
-       sent_recv_bytes = send(comm_socketfd, timeo, sizeof(timeo),0);
-       if(sent_recv_bytes < 0){perror("fail to send data");exit(1);}}
-       else{perror("error while receving datat");close(comm_socketfd);exit(1);} }
-     
-      std::string receivedData(buffer);
-      
-         
-      receivedData = receivedData.substr(0,sent_recv_bytes-1);
-        
-      if(receivedData == "OK"){
-       std::string calString = getCalString();
-       std::vector<std::string> inputVector = split(calString," ");
-        calString = calString + "\n";
-        std::cout << calString;
-        double a = std::stod(inputVector[1]);
-        double b = std::stod(inputVector[2]);
-        char *result = math(inputVector[0], a, b);
-        std::string calServerResult(result); 
-        std::cout << result;
-        sent_recv_bytes = send(comm_socketfd, calString.c_str(), strlen(calString.c_str()),0);
-        if(sent_recv_bytes < 0){perror("error while sending data ");close(comm_socketfd);exit(1);}         
-        
-        memset(buffer, 0, sizeof(buffer));
-        sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
-        
-      if(sent_recv_bytes < 0){
-       if(errno == EAGAIN){
-       sent_recv_bytes = send(comm_socketfd, timeo, sizeof(timeo),0);
-       if(sent_recv_bytes < 0){perror("fail to send data");exit(1);}}
-       else{perror("error while receving data"); close(comm_socketfd);exit(1);}
-      }
-                  
-          std::string receivedData(buffer);
-      
-          receivedData = receivedData.substr(0,sent_recv_bytes-1);
-          
-          receivedData = receivedData + "\n";          
-          
-          
-          if(receivedData == calServerResult){
+        std::string receivedData(buffer);
+        receivedData = receivedData.substr(0,sent_recv_bytes-1);
+
+        if(receivedData == "OK"){
+           std::string calString = getCalString();
+           std::vector<std::string> inputVector = split(calString," ");
+           calString = calString + "\n";
+           std::cout << calString;
+           double a = std::stod(inputVector[1]);
+           double b = std::stod(inputVector[2]);
+           char *result = math(inputVector[0], a, b);
+           std::string calServerResult(result); 
+           std::cout << result;
+           sent_recv_bytes = send(comm_socketfd, calString.c_str(), strlen(calString.c_str()),0);
+           if(sent_recv_bytes < 0){perror("error while sending data ");close(comm_socketfd);exit(1);}
+
+           memset(buffer, 0, sizeof(buffer));
+           sent_recv_bytes = recv(comm_socketfd, buffer, sizeof(buffer), 0);
+
+           if(sent_recv_bytes < 0){
+               if(errno == EAGAIN){
+                sent_recv_bytes = send(comm_socketfd, timeo, sizeof(timeo),0);
+                   if(sent_recv_bytes < 0){perror("fail to send data");exit(1);}
+                   close(comm_socketfd);break;}
+                   else{perror("error while receving data"); close(comm_socketfd);exit(1);}
+                   close(comm_socketfd);break;}
+           
+           std::string receivedData(buffer);
+           receivedData = receivedData.substr(0,sent_recv_bytes-1);
+           receivedData = receivedData + "\n";
+           if(receivedData == calServerResult){
             std::cout << "OK" << std::endl;
             char okchar[] = "OK\n";
             sent_recv_bytes = send(comm_socketfd, okchar, sizeof(okchar),0);
-      
-      
-           if(sent_recv_bytes < 0){
-                 perror("error while sending data to client");
-                 close(comm_socketfd);
-                 exit(1);
-                                }
-            // close(comm_socketfd);
-            // break;
-          
-            }
-              
-             else {
+            if(sent_recv_bytes < 0){perror("error while sending data to client");close(comm_socketfd);exit(1);}
+            close(comm_socketfd);
+            break;}
+            else {
              std::cout << errorchar;
              sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
-           
-           if(sent_recv_bytes < 0){perror("error while sending data to client"); close(comm_socketfd);exit(1);}}}
-      else{
-        std::cout << errorchar;
-        sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
-        // close(comm_socketfd);
-        // break;
-  
-      }   
-      
-     }
-      }   
-      
-      }
-     close(master_socketfd);
-     std::exit(1);
+             if(sent_recv_bytes < 0){perror("error while sending data to client"); close(comm_socketfd);exit(1);}
+             close(comm_socketfd);
+             break;}
+              }
+            else{
+              std::cout << errorchar;
+              sent_recv_bytes = send(comm_socketfd, errorchar, sizeof(errorchar),0);
+              close(comm_socketfd);
+              break;}
+            
 
-return 0;
+      }
+   }
+  }
+
+
+
+
+
+
+
+  return 0;
 }
 
-int gsready(std::string &ip, int port,int* ipstatus){
 
+int gsready(std::string &ip, int port,int* ipstatus){
 int socketfd; 
 struct sockaddr_in ipv4;
 struct sockaddr_in6 ipv6;
@@ -198,12 +176,9 @@ hint.ai_family = AF_UNSPEC;
 hint.ai_socktype = SOCK_STREAM;
 int status = getaddrinfo(ip.c_str(), NULL, &hint, &output);
 if(status != 0){
-std::cout << "There is problem in getting getaddrinfo" << std::endl;
-
-}
+perror("error with getaddress info");exit(1);}
 
 for(temp=output; temp != NULL;temp->ai_addr){
-
 if(temp->ai_family == AF_INET){
 ipv4.sin_family = AF_INET;
 ipv4.sin_port = htons(port);
@@ -285,7 +260,6 @@ char* math(std::string string, double a, double b) {
 }
 
 std::vector<std::string> split(std::string sString,std::string delimiter){
-
 std::vector<std::string> nString;
 std::string temp;
 
@@ -352,17 +326,3 @@ float2 = randomFloat();
 
 return calString;
 }
-
-void printtime(){
-  // Get the current time point
-    auto currentTime = std::chrono::system_clock::now();
-
-    // Extract seconds and milliseconds
-    auto seconds = std::chrono::time_point_cast<std::chrono::seconds>(currentTime);
-    auto milliseconds = currentTime - seconds;
-
-    // Convert seconds to a time_t value
-    std::time_t time = std::chrono::system_clock::to_time_t(currentTime);
-
-    // Print the time with seconds and milliseconds
-    std::cout << "Time: " << std::ctime(&time) << "Milliseconds: " << milliseconds.count() << "ms" << std::endl;}
