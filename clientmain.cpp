@@ -232,5 +232,3 @@ char* math(std::string string, double a, double b) {
 
     return str;
 }
-
-
